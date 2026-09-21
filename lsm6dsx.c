@@ -80,11 +80,19 @@ static LSM6DSX_Handle_t s_pool[LSM6DSX_MAX_DEVICES];
 /*  Шина: SPI4 / SPI3 / I2C за общими внутренними функциями                 */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * @brief  Опускает линию CS (активирует SPI-датчик).
+ * @param  cfg  конфигурация датчика (SPI-хэндл, порт/пин CS)
+ */
 static inline void lsm6dsx_cs_low(const LSM6DSX_Config_t *cfg)
 {
     HAL_GPIO_WritePin(cfg->cs_port, cfg->cs_pin, GPIO_PIN_RESET);
 }
 
+/**
+ * @brief  Поднимает линию CS (деактивирует SPI-датчик).
+ * @param  cfg  конфигурация датчика (SPI-хэндл, порт/пин CS)
+ */
 static inline void lsm6dsx_cs_high(const LSM6DSX_Config_t *cfg)
 {
     HAL_GPIO_WritePin(cfg->cs_port, cfg->cs_pin, GPIO_PIN_SET);
@@ -94,16 +102,32 @@ static inline void lsm6dsx_cs_high(const LSM6DSX_Config_t *cfg)
  *  данных) - управляется битом BIDIOE регистра CR1 SPI-периферии напрямую,
  *  т.к. соответствующие HAL-макросы не экспортируются публично во всех
  *  версиях HAL. Бит одинаково расположен во всех классических SPI STM32. */
+/**
+ * @brief  Переключает линию SPI 3-wire в направление передачи (TX).
+ * @param  hspi  хэндл SPI-периферии
+ */
 static inline void lsm6dsx_spi3_set_tx(SPI_HandleTypeDef *hspi)
 {
     SET_BIT(hspi->Instance->CR1, SPI_CR1_BIDIOE);
 }
 
+/**
+ * @brief  Переключает линию SPI 3-wire в направление приёма (RX).
+ * @param  hspi  хэндл SPI-периферии
+ */
 static inline void lsm6dsx_spi3_set_rx(SPI_HandleTypeDef *hspi)
 {
     CLEAR_BIT(hspi->Instance->CR1, SPI_CR1_BIDIOE);
 }
 
+/**
+ * @brief  Читает len байт регистров начиная с reg по шине, выбранной в конфигурации.
+ * @param  h    хэндл датчика
+ * @param  reg  адрес первого регистра
+ * @param  buf  буфер приёма, len байт
+ * @param  len  число байт для чтения
+ * @return HAL_OK либо код ошибки шины
+ */
 static HAL_StatusTypeDef lsm6dsx_read_regs(LSM6DSX_Handle_t *h, uint8_t reg, uint8_t *buf, uint16_t len)
 {
     const LSM6DSX_Config_t *cfg = &h->config;
@@ -151,6 +175,13 @@ static HAL_StatusTypeDef lsm6dsx_read_regs(LSM6DSX_Handle_t *h, uint8_t reg, uin
     return status;
 }
 
+/**
+ * @brief  Записывает один регистр по шине, выбранной в конфигурации.
+ * @param  h      хэндл датчика
+ * @param  reg    адрес регистра
+ * @param  value  записываемое значение
+ * @return HAL_OK либо код ошибки шины
+ */
 static HAL_StatusTypeDef lsm6dsx_write_reg(LSM6DSX_Handle_t *h, uint8_t reg, uint8_t value)
 {
     const LSM6DSX_Config_t *cfg = &h->config;
@@ -188,8 +219,14 @@ static HAL_StatusTypeDef lsm6dsx_write_reg(LSM6DSX_Handle_t *h, uint8_t reg, uin
 /*  Поиск/выделение слота пула (идемпотентность Init)                       */
 /* ------------------------------------------------------------------------ */
 
-/** Совпадение "физического" идентификатора датчика: для SPI - интерфейс +
- *  хэндл SPI + пин CS, для I2C - хэндл I2C + адрес. */
+/**
+ * @brief  Сравнивает два конфига на совпадение "физического" идентификатора
+ *         датчика: для SPI - интерфейс + хэндл SPI + пин CS, для I2C - хэндл
+ *         I2C + адрес.
+ * @param  a  первая конфигурация
+ * @param  b  вторая конфигурация
+ * @return 1, если совпадают; иначе 0
+ */
 static uint8_t lsm6dsx_same_device(const LSM6DSX_Config_t *a, const LSM6DSX_Config_t *b)
 {
     if (a->interface != b->interface)
@@ -203,6 +240,12 @@ static uint8_t lsm6dsx_same_device(const LSM6DSX_Config_t *a, const LSM6DSX_Conf
     return (a->hspi == b->hspi) && (a->cs_port == b->cs_port) && (a->cs_pin == b->cs_pin);
 }
 
+/**
+ * @brief  Ищет в пуле уже занятый слот с тем же физическим датчиком, иначе
+ *         возвращает первый свободный слот (для идемпотентности Init).
+ * @param  config  конфигурация регистрируемого датчика
+ * @return указатель на слот пула, либо NULL, если пул исчерпан
+ */
 static LSM6DSX_Handle_t *lsm6dsx_find_or_alloc_slot(const LSM6DSX_Config_t *config)
 {
     LSM6DSX_Handle_t *free_slot = NULL;
@@ -233,9 +276,14 @@ static LSM6DSX_Handle_t *lsm6dsx_find_or_alloc_slot(const LSM6DSX_Config_t *conf
 /*  Масштабирование сырых отсчётов в физические единицы                    */
 /* ------------------------------------------------------------------------ */
 
-/** g на младший значащий разряд - справочные значения из даташитов
- *  LSM6DSO-family, общие для семейства с точностью, достаточной для
- *  прикладных задач опроса (не метрология). */
+/**
+ * @brief  Чувствительность акселерометра (g на младший значащий разряд) -
+ *         справочные значения из даташитов LSM6DSO-family, общие для
+ *         семейства с точностью, достаточной для прикладных задач опроса
+ *         (не метрология).
+ * @param  fs  диапазон измерения акселерометра
+ * @return чувствительность, g/LSB
+ */
 static float lsm6dsx_xl_sensitivity(LSM6DSX_XLFullScale_t fs)
 {
     switch (fs)
@@ -248,6 +296,11 @@ static float lsm6dsx_xl_sensitivity(LSM6DSX_XLFullScale_t fs)
     }
 }
 
+/**
+ * @brief  Чувствительность гироскопа (dps на младший значащий разряд).
+ * @param  fs  диапазон измерения гироскопа
+ * @return чувствительность, dps/LSB
+ */
 static float lsm6dsx_g_sensitivity(LSM6DSX_GFullScale_t fs)
 {
     switch (fs)
@@ -265,9 +318,14 @@ static float lsm6dsx_g_sensitivity(LSM6DSX_GFullScale_t fs)
 /*  Фильтрация                                                              */
 /* ------------------------------------------------------------------------ */
 
-/** Приводит уровень фильтрации (0..LSM6DSX_FILTER_LEVEL_MAX) к параметрам
- *  конкретного фильтра и сбрасывает накопленное состояние - вызывается и из
- *  Init(), и из SetFilter(). */
+/**
+ * @brief  Приводит уровень фильтрации (0..LSM6DSX_FILTER_LEVEL_MAX) к
+ *         параметрам конкретного фильтра и сбрасывает накопленное состояние -
+ *         вызывается и из Init(), и из SetFilter().
+ * @param  h      хэндл датчика
+ * @param  type   тип фильтра
+ * @param  level  уровень фильтрации, 0..LSM6DSX_FILTER_LEVEL_MAX
+ */
 static void lsm6dsx_filter_reset(LSM6DSX_Handle_t *h, LSM6DSX_FilterType_t type, uint8_t level)
 {
     h->config.filter_type  = type;
@@ -288,9 +346,14 @@ static void lsm6dsx_filter_reset(LSM6DSX_Handle_t *h, LSM6DSX_FilterType_t type,
     memset(h->ma_buffer, 0, sizeof(h->ma_buffer));
 }
 
-/** Применяет активный фильтр к 6 каналам (3 акселерометра + 3 гироскопа) на
- *  месте, в values[0..5]. Быстрая операция: EMA - 6 умножений-сложений,
- *  MOVING_AVG - 6 вставок в кольцевой буфер + скользящая сумма. */
+/**
+ * @brief  Применяет активный фильтр к 6 каналам (3 акселерометра + 3
+ *         гироскопа) на месте, в values[0..5]. Быстрая операция: EMA - 6
+ *         умножений-сложений, MOVING_AVG - 6 вставок в кольцевой буфер +
+ *         скользящая сумма.
+ * @param  h       хэндл датчика
+ * @param  values  массив [6] значений каналов, изменяется на месте
+ */
 static void lsm6dsx_filter_apply(LSM6DSX_Handle_t *h, float values[6])
 {
     if (h->config.filter_type == LSM6DSX_FILTER_EMA)
@@ -339,13 +402,22 @@ static void lsm6dsx_filter_apply(LSM6DSX_Handle_t *h, float values[6])
 /*  Инициализация                                                           */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * @brief  Кодирует ODR в 4-битный код регистра (значения enum совпадают с ним).
+ * @param  odr  частота обновления
+ * @return 4-битный код ODR
+ */
 static uint8_t lsm6dsx_encode_odr(LSM6DSX_Odr_t odr)
 {
     return (uint8_t)odr; /* значения enum совпадают с 4-битным кодом ODR */
 }
 
-/** Записывает CTRL1_XL (ODR_XL[7:4] | FS_XL[3:2]) и CTRL2_G (ODR_G[7:4] |
- *  FS_G[3:2] | FS_125[0]) из сохранённой в хэндле конфигурации. */
+/**
+ * @brief  Записывает CTRL1_XL (ODR_XL[7:4] | FS_XL[3:2]) и CTRL2_G (ODR_G[7:4] |
+ *         FS_G[3:2] | FS_125[0]) из сохранённой в хэндле конфигурации.
+ * @param  h  хэндл датчика
+ * @return HAL_OK либо код ошибки шины
+ */
 static HAL_StatusTypeDef lsm6dsx_apply_odr_fs(LSM6DSX_Handle_t *h)
 {
     const LSM6DSX_Config_t *cfg = &h->config;

@@ -6,7 +6,7 @@
  *          LSM6DSOX, LSM6DSO32, LSM6DSR, LSM6DSRX, ISM330DHCX.
  * @author  Mechanic
  * @date    19.09.2026
- * @version 1.0
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -154,6 +154,7 @@ typedef struct
     /** Интерфейс подключения датчика. */
     LSM6DSX_Interface_t interface;
 
+#if defined(HAL_SPI_MODULE_ENABLED)
     /** SPI-хэндл (LSM6DSX_IF_SPI4/LSM6DSX_IF_SPI3). Для SPI3 периферия
      *  должна быть настроена в CubeMX с Direction = "1 Line" (half-duplex),
      *  модуль сам переключает CR1.BIDIOE между приёмом и передачей.
@@ -165,13 +166,16 @@ typedef struct
      *  при LSM6DSX_IF_I2C. */
     GPIO_TypeDef *cs_port;
     uint16_t      cs_pin;
+#endif /* HAL_SPI_MODULE_ENABLED */
 
+#if defined(HAL_I2C_MODULE_ENABLED)
     /** I2C-хэндл. Используется только при LSM6DSX_IF_I2C. */
     I2C_HandleTypeDef *hi2c;
 
     /** 7-битный адрес на шине I2C: 0x6A, если SDO/SA0 подтянут к GND, либо
      *  0x6B, если к VDD. Используется только при LSM6DSX_IF_I2C. */
     uint8_t i2c_address;
+#endif /* HAL_I2C_MODULE_ENABLED */
 
     /** Модель датчика: LSM6DSX_MODEL_AUTO для автоопределения по WHO_AM_I,
      *  либо конкретное значение, если модель известна заранее (быстрее -

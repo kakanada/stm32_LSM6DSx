@@ -4,7 +4,7 @@
  * @brief   Реализация драйвера LSM6DSx (см. lsm6dsx.h).
  * @author  Mechanic
  * @date    19.09.2026
- * @version 1.0
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -80,6 +80,7 @@ static LSM6DSX_Handle_t s_pool[LSM6DSX_MAX_DEVICES];
 /*  Шина: SPI4 / SPI3 / I2C за общими внутренними функциями                 */
 /* ------------------------------------------------------------------------ */
 
+#if defined(HAL_SPI_MODULE_ENABLED)
 /**
  * @brief  Опускает линию CS (активирует SPI-датчик).
  * @param  cfg  конфигурация датчика (SPI-хэндл, порт/пин CS)
@@ -119,6 +120,7 @@ static inline void lsm6dsx_spi3_set_rx(SPI_HandleTypeDef *hspi)
 {
     CLEAR_BIT(hspi->Instance->CR1, SPI_CR1_BIDIOE);
 }
+#endif /* HAL_SPI_MODULE_ENABLED */
 
 /**
  * @brief  Читает len байт регистров начиная с reg по шине, выбранной в конфигурации.
@@ -135,6 +137,7 @@ static HAL_StatusTypeDef lsm6dsx_read_regs(LSM6DSX_Handle_t *h, uint8_t reg, uin
 
     switch (cfg->interface)
     {
+#if defined(HAL_SPI_MODULE_ENABLED)
     case LSM6DSX_IF_SPI4:
     {
         uint8_t addr = reg | LSM6DSX_SPI_READ_BIT;
@@ -161,10 +164,15 @@ static HAL_StatusTypeDef lsm6dsx_read_regs(LSM6DSX_Handle_t *h, uint8_t reg, uin
         lsm6dsx_cs_high(cfg);
         break;
     }
+#endif /* HAL_SPI_MODULE_ENABLED */
+#if defined(HAL_I2C_MODULE_ENABLED)
     case LSM6DSX_IF_I2C:
-    default:
         status = HAL_I2C_Mem_Read(cfg->hi2c, (uint16_t)(cfg->i2c_address << 1), reg,
                                    I2C_MEMADD_SIZE_8BIT, buf, len, LSM6DSX_BUS_TIMEOUT_MS);
+        break;
+#endif /* HAL_I2C_MODULE_ENABLED */
+    default:
+        status = HAL_ERROR;
         break;
     }
 
@@ -185,11 +193,14 @@ static HAL_StatusTypeDef lsm6dsx_read_regs(LSM6DSX_Handle_t *h, uint8_t reg, uin
 static HAL_StatusTypeDef lsm6dsx_write_reg(LSM6DSX_Handle_t *h, uint8_t reg, uint8_t value)
 {
     const LSM6DSX_Config_t *cfg = &h->config;
+#if defined(HAL_SPI_MODULE_ENABLED)
     uint8_t frame[2] = { reg, value };
+#endif /* HAL_SPI_MODULE_ENABLED */
     HAL_StatusTypeDef status;
 
     switch (cfg->interface)
     {
+#if defined(HAL_SPI_MODULE_ENABLED)
     case LSM6DSX_IF_SPI4:
         lsm6dsx_cs_low(cfg);
         status = HAL_SPI_Transmit(cfg->hspi, frame, 2U, LSM6DSX_BUS_TIMEOUT_MS);
@@ -201,10 +212,15 @@ static HAL_StatusTypeDef lsm6dsx_write_reg(LSM6DSX_Handle_t *h, uint8_t reg, uin
         status = HAL_SPI_Transmit(cfg->hspi, frame, 2U, LSM6DSX_BUS_TIMEOUT_MS);
         lsm6dsx_cs_high(cfg);
         break;
+#endif /* HAL_SPI_MODULE_ENABLED */
+#if defined(HAL_I2C_MODULE_ENABLED)
     case LSM6DSX_IF_I2C:
-    default:
         status = HAL_I2C_Mem_Write(cfg->hi2c, (uint16_t)(cfg->i2c_address << 1), reg,
                                     I2C_MEMADD_SIZE_8BIT, &value, 1U, LSM6DSX_BUS_TIMEOUT_MS);
+        break;
+#endif /* HAL_I2C_MODULE_ENABLED */
+    default:
+        status = HAL_ERROR;
         break;
     }
 
@@ -233,11 +249,17 @@ static uint8_t lsm6dsx_same_device(const LSM6DSX_Config_t *a, const LSM6DSX_Conf
     {
         return 0U;
     }
+#if defined(HAL_I2C_MODULE_ENABLED)
     if (a->interface == LSM6DSX_IF_I2C)
     {
         return (a->hi2c == b->hi2c) && (a->i2c_address == b->i2c_address);
     }
+#endif /* HAL_I2C_MODULE_ENABLED */
+#if defined(HAL_SPI_MODULE_ENABLED)
     return (a->hspi == b->hspi) && (a->cs_port == b->cs_port) && (a->cs_pin == b->cs_pin);
+#else
+    return 0U;
+#endif /* HAL_SPI_MODULE_ENABLED */
 }
 
 /**
@@ -443,14 +465,28 @@ LSM6DSX_Handle_t *LSM6DSX_Init(const LSM6DSX_Config_t *config)
     {
         return NULL;
     }
+#if defined(HAL_SPI_MODULE_ENABLED)
     if ((config->interface != LSM6DSX_IF_I2C) && (config->hspi == NULL))
     {
         return NULL;
     }
+#else
+    if (config->interface != LSM6DSX_IF_I2C)
+    {
+        return NULL; /* SPI отключён (HAL_SPI_MODULE_ENABLED не определён) */
+    }
+#endif /* HAL_SPI_MODULE_ENABLED */
+#if defined(HAL_I2C_MODULE_ENABLED)
     if ((config->interface == LSM6DSX_IF_I2C) && (config->hi2c == NULL))
     {
         return NULL;
     }
+#else
+    if (config->interface == LSM6DSX_IF_I2C)
+    {
+        return NULL; /* I2C отключён (HAL_I2C_MODULE_ENABLED не определён) */
+    }
+#endif /* HAL_I2C_MODULE_ENABLED */
 
     LSM6DSX_Handle_t *h = lsm6dsx_find_or_alloc_slot(config);
     if (h == NULL)
@@ -461,19 +497,23 @@ LSM6DSX_Handle_t *LSM6DSX_Init(const LSM6DSX_Config_t *config)
     h->config = *config;
     h->index  = (uint8_t)(h - s_pool);
 
+#if defined(HAL_SPI_MODULE_ENABLED)
     if (config->interface != LSM6DSX_IF_I2C)
     {
         lsm6dsx_cs_high(&h->config); /* CS неактивен по умолчанию */
     }
+#endif /* HAL_SPI_MODULE_ENABLED */
 
     /* BDU=1 (защита от разрыва чтения MSB/LSB), IF_INC=1 (авто-инкремент
      * адреса для burst-чтения), SIM=1 только для 3-wire SPI. */
     uint8_t ctrl3_c = LSM6DSX_CTRL3_C_BDU | LSM6DSX_CTRL3_C_IF_INC;
+#if defined(HAL_SPI_MODULE_ENABLED)
     if (config->interface == LSM6DSX_IF_SPI3)
     {
         ctrl3_c |= LSM6DSX_CTRL3_C_SIM;
         lsm6dsx_spi3_set_tx(h->config.hspi); /* стартовое направление - TX */
     }
+#endif /* HAL_SPI_MODULE_ENABLED */
     if (lsm6dsx_write_reg(h, LSM6DSX_REG_CTRL3_C, ctrl3_c) != HAL_OK)
     {
         h->used = 0U;
